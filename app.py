@@ -24,7 +24,7 @@ async def echo(update: Update, context: CallbackContext):
     await update.message.reply_text(response)
 
 async def go(update: Update, context: CallbackContext):
-    await update.message.reply_text('Введите ссылку')
+    await update.message.reply_text('Введите ссылку на интересующий вас продукт. Пример: (https://goldapple.ru/)')
     
 
 
