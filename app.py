@@ -1,73 +1,124 @@
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
-from telegram.ext import ApplicationBuilder, CallbackContext, CommandHandler, MessageHandler, filters, Updater
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackContext,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ConversationHandler,
+    ContextTypes
+)
 from credentials import BOT_TOKEN, BOT_USERNAME
-import json
 from request import check_availability
-from bs4 import BeautifulSoup
-import requests
+import sqlite3 as sl
 
+URL, NAME = range(2)
+LINK_ID = range(1)
 
-def check(text: str) -> str:
-    if "https://goldapple.ru" in text:
-        return check_availability(text)
-    return "Полученна неизвестная команда. Для помощи напишите /help"
+def init_db():
+    con = sl.connect('links.db')
+    with con:
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT NOT NULL,
+            name TEXT,
+            availability STRING
+        );
+        """)
+    con.close()
+init_db()
 
-async def launch_web_ui(update: Update, callback: CallbackContext):         
-    await update.effective_chat.send_message("Привет, дружок-пирожок, я твой асистент! Напиши /help, чтобы узнать, что я умею") 
-                                                                            
-async def help_command(update: Update, context: CallbackContext) -> None:   
-    await update.message.reply_text("/start - Запустить бота \n /help - Список команд \n /go - Запросить ссылку"
-                                    )
+def insert_link(url, name, availability):
+    con = sl.connect('links.db')
+    sql = 'INSERT INTO links (url, name, availability) VALUES (?, ?, ?)'
+    data = (url, name, availability)
+    with con:
+        con.execute(sql, data)
+    con.close()
 
-async def echo(update: Update, context: CallbackContext):
-    response: str = check(update.message.text)
-    await update.message.reply_text(response)
+def delete_link(id):
+    con = sl.connect('links.db')
+    sql = 'DELETE FROM links WHERE id = ?'
+    data = (id)
+    with con:
+        con.execute(sql, data)
+    con.close()
 
-async def go(update: Update, context: CallbackContext):
-    await update.message.reply_text('Введите ссылку на интересующий вас продукт. Пример: (https://goldapple.ru/)')
+async def start_add(update: Update, context: CallbackContext):
+    await update.message.reply_text('Введите название продукта:')
+    return NAME
+
+async def get_name(update: Update, context: CallbackContext):
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text('Введите ссылку на продукт:')
+    return URL
+
+async def add_link(update: Update, context: CallbackContext):
+    url = update.message.text
+    name = context.user_data['name']
+    availability = check_availability(url)
+    insert_link(url, name, availability)
+    await update.message.reply_text(f'Ссылка добавлена!\nИмя: {name}\nURL: {url}\nДоступность: {availability}')
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: CallbackContext):
+    await update.message.reply_text('Добавление ссылки отменено.')
+    return ConversationHandler.END
     
+async def show_all(update: Update, callback: CallbackContext): 
+    con = sl.connect('links.db')
+    data = con.execute('SELECT * FROM links')
+    formated_data = ""
+    for row in data:
+        formated_data += f"ID: {row[0]}, URL: {row[1]}, Name: {row[2]}, Availability: {row[3]}\n"
+    if formated_data == "":
+        formated_data = "No records found."
+    await update.message.reply_text(formated_data)
+    con.close()
+    
+async def delete_start(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text('Введите ID товара, который хотите удалить')
+    return LINK_ID
 
+async def delete_end(update: Update, context: CallbackContext) -> int:
+    id = update.message.text
+    delete_link(id)
+    await update.message.reply_text(f'Ссылка удалена!\nID = {id}')
+    return ConversationHandler.END
 
+async def help_command(update: Update, context: CallbackContext) -> None:   
+    await update.message.reply_text(
+        "/add - Добавить товар в список\n"
+        "/show - Посмотреть список отслеживаемых товаров\n"
+        "/delete - Удалить товар из списка\n"
+        "/help - Список команд \n"
+    )
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler('start', launch_web_ui))
+    application.add_handler(CommandHandler('show', show_all))
     application.add_handler(CommandHandler('help', help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-    application.add_handler(CommandHandler('go', go))
 
-    
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('add', start_add)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_link)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    application.add_handler(conv_handler)
+
+    conv_handler1 = ConversationHandler(
+        entry_points=[CommandHandler('delete', delete_start)],
+        states={
+            LINK_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_end)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    application.add_handler(conv_handler1)
+
 
     print(f"Your bot is listening! Navigate to http://t.me/{BOT_USERNAME} to interact with it!")
     application.run_polling()
-
-
-
-
-
-
-# async def adding_in_array(update: Update, callback: CallbackContext):
-#     message = update.message
-#     text = message.text
-
-#     page = requests.get(text)
-#     print(page.status_code)
-#     soup = BeautifulSoup(page.text, "html.parser")
-#     allNews = soup.findAll('div', class_='iBwy+ p0Qv4')
-#     print(allNews)
-#     for data in allNews:
-#         text_content = data.text.strip() 
-#         print(f"Found text: '{text_content}'")  
-#         if text_content == 'нет в наличии':
-#              await update.effective_chat.send_message(f'Нету в наличии')
-#         else: 
-#              await update.effective_chat.send_message(f'Можно заказать')
-   
-#     print(f'{text}' )
-#     await update.effective_chat.send_message(f'you sent {text}, {page.status_code}')
-    
-
-
-
-
-    # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, adding_in_array))
