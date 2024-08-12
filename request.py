@@ -1,6 +1,5 @@
 from bs4 import BeautifulSoup
 from selenium import webdriver
-url = "https://goldapple.ru/19000197601-crystal-glam-tint"
 
 def check_availability(url):
     driver = webdriver.Edge()

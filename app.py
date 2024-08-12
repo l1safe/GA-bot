@@ -1,4 +1,4 @@
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CallbackContext,
@@ -6,17 +6,40 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ConversationHandler,
-    ContextTypes
 )
 from credentials import BOT_TOKEN, BOT_USERNAME
 from request import check_availability
 import sqlite3 as sl
+import schedule
+import time
 
 URL, NAME = range(2)
 LINK_ID = range(1)
+UPDATE_ID, NAM2=range(2)
 
-def init_db():
-    con = sl.connect('links.db')
+def update_every_morning():
+    try:
+        with sl.connect('links.db') as con:
+            cursor = con.cursor()
+            cursor.execute('SELECT id, url FROM links')
+            for row in cursor.fetchall():
+                id = row[0]
+                url = row[1]
+                availability = check_availability(url)
+                update_availability(id, availability)
+                print(url, id, availability)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+def run_scheduler():
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # Wait for a minute
+
+schedule.every().day.at("9:00").do(update_every_morning)
+
+def init_db(): #CRUD init
+    con = sl.connect('links.db') 
     with con:
         con.execute("""
         CREATE TABLE IF NOT EXISTS links (
@@ -29,7 +52,7 @@ def init_db():
     con.close()
 init_db()
 
-def insert_link(url, name, availability):
+def insert_link(url, name, availability): #CRUD INSERT
     con = sl.connect('links.db')
     sql = 'INSERT INTO links (url, name, availability) VALUES (?, ?, ?)'
     data = (url, name, availability)
@@ -37,10 +60,26 @@ def insert_link(url, name, availability):
         con.execute(sql, data)
     con.close()
 
-def delete_link(id):
+def delete_link(id): #CRUD DELETE
     con = sl.connect('links.db')
     sql = 'DELETE FROM links WHERE id = ?'
     data = (id)
+    with con:
+        con.execute(sql, data)
+    con.close()
+
+def update_availability(id, availability): #CRUD
+    con = sl.connect('links.db')
+    sql = 'UPDATE links SET availability = ? WHERE id = ?'
+    data = (availability, id)
+    with con:
+        con.execute(sql, data)
+    con.close()
+
+def update_record(id, name): #CRUD подумать как сделать одно действие для всех
+    con = sl.connect('links.db')
+    sql = 'UPDATE links SET name = ? WHERE id = ?'
+    data = (name, id)
     with con:
         con.execute(sql, data)
     con.close()
@@ -87,6 +126,22 @@ async def delete_end(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(f'Ссылка удалена!\nID = {id}')
     return ConversationHandler.END
 
+async def update_start(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text('Введите ID товара, который хотите удалить')
+    return UPDATE_ID
+
+async def update_name_name(update: Update, context: CallbackContext):
+    context.user_data['id'] = update.message.text
+    await update.message.reply_text('Введите ссылку на продукт:')
+    return NAM2
+
+async def update_end(update: Update, context: CallbackContext) -> int:
+    name = update.message.text
+    id = context.user_data['id']
+    update_record(id, name)
+    await update.message.reply_text(f'Ссылка удалена!\nID = {id}')
+    return ConversationHandler.END
+
 async def help_command(update: Update, context: CallbackContext) -> None:   
     await update.message.reply_text(
         "/add - Добавить товар в список\n"
@@ -99,7 +154,6 @@ if __name__ == '__main__':
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler('show', show_all))
     application.add_handler(CommandHandler('help', help_command))
-
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('add', start_add)],
         states={
@@ -119,6 +173,18 @@ if __name__ == '__main__':
     )
     application.add_handler(conv_handler1)
 
+    conv_handler2 = ConversationHandler(
+        entry_points=[CommandHandler('update', update_start)],
+        states={
+            UPDATE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_name_name)],
+            NAM2: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_end)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    application.add_handler(conv_handler2)
 
+    import threading
+    scheduler_thread = threading.Thread(target=run_scheduler)
+    scheduler_thread.start()
     print(f"Your bot is listening! Navigate to http://t.me/{BOT_USERNAME} to interact with it!")
     application.run_polling()
