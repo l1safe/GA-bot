@@ -34,9 +34,9 @@ def update_every_morning():
 def run_scheduler():
     while True:
         schedule.run_pending()
-        time.sleep(60)  # Wait for a minute
+        time.sleep(60)
 
-schedule.every().day.at("9:00").do(update_every_morning)
+schedule.every().day.at("09:00").do(update_every_morning)
 
 def init_db(): #CRUD init
     con = sl.connect('links.db') 
