@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup 
 from telegram.ext import (
     ApplicationBuilder,
     CallbackContext,
@@ -6,12 +6,16 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ConversationHandler,
+    CallbackQueryHandler
 )
 from credentials import BOT_TOKEN, BOT_USERNAME
 from request import check_availability
 import sqlite3 as sl
 import schedule
 import time
+from db import delete_link, insert_link, update_availability, init_db, update_record
+
+init_db()
 
 URL, NAME = range(2)
 LINK_ID = range(1)
@@ -38,52 +42,6 @@ def run_scheduler():
 
 schedule.every().day.at("09:00").do(update_every_morning)
 
-def init_db(): #CRUD init
-    con = sl.connect('links.db') 
-    with con:
-        con.execute("""
-        CREATE TABLE IF NOT EXISTS links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT NOT NULL,
-            name TEXT,
-            availability STRING
-        );
-        """)
-    con.close()
-init_db()
-
-def insert_link(url, name, availability): #CRUD INSERT
-    con = sl.connect('links.db')
-    sql = 'INSERT INTO links (url, name, availability) VALUES (?, ?, ?)'
-    data = (url, name, availability)
-    with con:
-        con.execute(sql, data)
-    con.close()
-
-def delete_link(id): #CRUD DELETE
-    con = sl.connect('links.db')
-    sql = 'DELETE FROM links WHERE id = ?'
-    data = (id)
-    with con:
-        con.execute(sql, data)
-    con.close()
-
-def update_availability(id, availability): #CRUD
-    con = sl.connect('links.db')
-    sql = 'UPDATE links SET availability = ? WHERE id = ?'
-    data = (availability, id)
-    with con:
-        con.execute(sql, data)
-    con.close()
-
-def update_record(id, name): #CRUD подумать как сделать одно действие для всех
-    con = sl.connect('links.db')
-    sql = 'UPDATE links SET name = ? WHERE id = ?'
-    data = (name, id)
-    with con:
-        con.execute(sql, data)
-    con.close()
-
 async def start_add(update: Update, context: CallbackContext):
     await update.message.reply_text('Введите название продукта:')
     return NAME
@@ -105,7 +63,7 @@ async def cancel(update: Update, context: CallbackContext):
     await update.message.reply_text('Добавление ссылки отменено.')
     return ConversationHandler.END
     
-async def show_all(update: Update, callback: CallbackContext): 
+async def show_all(message, context: CallbackContext): 
     con = sl.connect('links.db')
     data = con.execute('SELECT * FROM links')
     formated_data = ""
@@ -113,7 +71,7 @@ async def show_all(update: Update, callback: CallbackContext):
         formated_data += f"ID: {row[0]}, URL: {row[1]}, Name: {row[2]}, Availability: {row[3]}\n"
     if formated_data == "":
         formated_data = "No records found."
-    await update.message.reply_text(formated_data)
+    await message.reply_text(formated_data)
     con.close()
     
 async def delete_start(update: Update, context: CallbackContext) -> int:
@@ -142,18 +100,36 @@ async def update_end(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(f'Ссылка удалена!\nID = {id}')
     return ConversationHandler.END
 
-async def help_command(update: Update, context: CallbackContext) -> None:   
-    await update.message.reply_text(
+async def help_command(message, context: CallbackContext) -> None:   
+    await message.reply_text(
         "/add - Добавить товар в список\n"
         "/show - Посмотреть список отслеживаемых товаров\n"
         "/delete - Удалить товар из списка\n"
         "/help - Список команд \n"
     )
 
+async def send_main_menu(update: Update, context: CallbackContext) -> None:
+    keyboard = [
+        [InlineKeyboardButton("Help", callback_data='help')],
+        [InlineKeyboardButton("Show", callback_data='show')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text('Please choose an option:', reply_markup=reply_markup)
+
+async def button_handler(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == 'help':
+        await help_command(query.message, context)
+    elif query.data == 'show':
+        await show_all(query.message, context)
+
 if __name__ == '__main__':
     application = ApplicationBuilder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler('show', show_all))
-    application.add_handler(CommandHandler('help', help_command))
+    application.add_handler(CommandHandler('start', send_main_menu))
+    application.add_handler(CallbackQueryHandler(button_handler))
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('add', start_add)],
         states={
