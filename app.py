@@ -3,112 +3,45 @@ from telegram.ext import (
     ApplicationBuilder,
     CallbackContext,
     CommandHandler,
-    MessageHandler,
-    filters,
-    ConversationHandler,
-    CallbackQueryHandler
+    CallbackQueryHandler,
+    PicklePersistence
 )
 from credentials import BOT_TOKEN, BOT_USERNAME
-from request import check_availability
 import sqlite3 as sl
 import schedule
-import time
-from db import delete_link, insert_link, update_availability, init_db, update_record
+from db import init_db, update_every_morning
+from delete import get_delete_handler
+from add import get_add_handler
+from update import get_update_handler
+from basic_func import run_scheduler
 
 init_db()
 
-URL, NAME = range(2)
-LINK_ID = range(1)
-UPDATE_ID, NAM2=range(2)
-
-def update_every_morning():
-    try:
-        with sl.connect('links.db') as con:
-            cursor = con.cursor()
-            cursor.execute('SELECT id, url FROM links')
-            for row in cursor.fetchall():
-                id = row[0]
-                url = row[1]
-                availability = check_availability(url)
-                update_availability(id, availability)
-                print(url, id, availability)
-    except Exception as e:
-        print(f"An error occurred: {e}")
-
-def run_scheduler():
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
 schedule.every().day.at("09:00").do(update_every_morning)
 
-async def start_add(update: Update, context: CallbackContext):
-    await update.message.reply_text('Введите название продукта:')
-    return NAME
-
-async def get_name(update: Update, context: CallbackContext):
-    context.user_data['name'] = update.message.text
-    await update.message.reply_text('Введите ссылку на продукт:')
-    return URL
-
-async def add_link(update: Update, context: CallbackContext):
-    url = update.message.text
-    name = context.user_data['name']
-    availability = check_availability(url)
-    insert_link(url, name, availability)
-    await update.message.reply_text(f'Ссылка добавлена!\nИмя: {name}\nURL: {url}\nДоступность: {availability}')
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: CallbackContext):
-    await update.message.reply_text('Добавление ссылки отменено.')
-    return ConversationHandler.END
-    
-async def show_all(message, context: CallbackContext): 
-    con = sl.connect('links.db')
-    data = con.execute('SELECT * FROM links')
+async def show_all(message, context: CallbackContext): #перемещать или нет в CRUD
+    user_id = context.user_data.get('user_id')
+    user_id = int(user_id)
+    con = sl.connect('main_database.db')
+    data = ('SELECT * FROM links JOIN links_to_users ON links.id = links_to_users.link_id WHERE links_to_users.user_id = ?')
+    rows = con.execute(data, (user_id,))
     formated_data = ""
-    for row in data:
+    for row in rows:
         formated_data += f"ID: {row[0]}, URL: {row[1]}, Name: {row[2]}, Availability: {row[3]}\n"
     if formated_data == "":
         formated_data = "No records found."
     await message.reply_text(formated_data)
     con.close()
-    
-async def delete_start(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text('Введите ID товара, который хотите удалить')
-    return LINK_ID
-
-async def delete_end(update: Update, context: CallbackContext) -> int:
-    id = update.message.text
-    delete_link(id)
-    await update.message.reply_text(f'Ссылка удалена!\nID = {id}')
-    return ConversationHandler.END
-
-async def update_start(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text('Введите ID товара, который хотите удалить')
-    return UPDATE_ID
-
-async def update_name_name(update: Update, context: CallbackContext):
-    context.user_data['id'] = update.message.text
-    await update.message.reply_text('Введите ссылку на продукт:')
-    return NAM2
-
-async def update_end(update: Update, context: CallbackContext) -> int:
-    name = update.message.text
-    id = context.user_data['id']
-    update_record(id, name)
-    await update.message.reply_text(f'Ссылка удалена!\nID = {id}')
-    return ConversationHandler.END
 
 async def help_command(message, context: CallbackContext) -> None:   
     await message.reply_text(
         "/add - Добавить товар в список\n"
-        "/show - Посмотреть список отслеживаемых товаров\n"
         "/delete - Удалить товар из списка\n"
-        "/help - Список команд \n"
     )
 
 async def send_main_menu(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    context.user_data['user_id'] = user_id
     keyboard = [
         [InlineKeyboardButton("Help", callback_data='help')],
         [InlineKeyboardButton("Show", callback_data='show')]
@@ -119,7 +52,6 @@ async def send_main_menu(update: Update, context: CallbackContext) -> None:
 async def button_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
-
     if query.data == 'help':
         await help_command(query.message, context)
     elif query.data == 'show':
@@ -127,37 +59,18 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(BOT_TOKEN).build()
+    persistence = PicklePersistence('conversation_data.pickle')
     application.add_handler(CommandHandler('start', send_main_menu))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('add', start_add)],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_link)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    application.add_handler(conv_handler)
+    add_handler = get_add_handler()
+    application.add_handler(add_handler)
 
-    conv_handler1 = ConversationHandler(
-        entry_points=[CommandHandler('delete', delete_start)],
-        states={
-            LINK_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_end)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    application.add_handler(conv_handler1)
+    delete_handler = get_delete_handler()
+    application.add_handler(delete_handler)
 
-    conv_handler2 = ConversationHandler(
-        entry_points=[CommandHandler('update', update_start)],
-        states={
-            UPDATE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_name_name)],
-            NAM2: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_end)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    application.add_handler(conv_handler2)
+    update_handler = get_update_handler()
+    application.add_handler(update_handler)
 
     import threading
     scheduler_thread = threading.Thread(target=run_scheduler)
