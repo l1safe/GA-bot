@@ -6,7 +6,7 @@ from telegram.ext import (
     filters,
     ConversationHandler,
 )
-from db import delete_link 
+from db import delete_link, delete_links_to_users
 from basic_func import cancel
 
 LINK_ID = range(1)
@@ -18,9 +18,9 @@ async def delete_start(update: Update, context: CallbackContext) -> int:
 async def delete_end(update: Update, context: CallbackContext) -> int:
     id = update.message.text
     delete_link(id)
+    delete_links_to_users(id)
     await update.message.reply_text(f'Ссылка удалена!\nID = {id}')
     return ConversationHandler.END
-
 
 def get_delete_handler() -> ConversationHandler:
     return ConversationHandler(

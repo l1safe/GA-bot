@@ -57,6 +57,14 @@ def insert_links_to_users(user_id, link_id): #CRUD INSERT
         con.execute(sql, data)
     con.close()
 
+def delete_links_to_users(id): #CRUD DELETE
+    con = sl.connect('main_database.db')
+    sql = 'DELETE FROM links_to_users WHERE link_id = ?'
+    data = (id)
+    with con:
+        con.execute(sql, data)
+    con.close()
+
 def update_availability(id, availability): #CRUD
     con = sl.connect('main_database.db')
     sql = 'UPDATE links SET availability = ? WHERE id = ?'

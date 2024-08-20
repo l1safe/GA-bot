@@ -47,7 +47,7 @@ async def send_main_menu(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("Show", callback_data='show')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Please choose an option:', reply_markup=reply_markup)
+    await update.message.reply_text('Выберите действие:', reply_markup=reply_markup)
 
 async def button_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
